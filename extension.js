@@ -56,8 +56,9 @@ define(function(require, exports, module) {
 			} catch (e) {
 				Notification.open({
 					type: 'error',
-					title: 'CoffeeScript compilation failed.',
-					description: e.message + ' on line ' + e.location.first_line
+					title: 'CoffeeScript compilation failed',
+					description: e.message + ' on line ' + e.location.first_line,
+					autoClose: true
 				});
 			}
 		}
