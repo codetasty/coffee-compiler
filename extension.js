@@ -1,68 +1,85 @@
 define(function(require, exports, module) {
 	var ExtensionManager = require('core/extensionManager');
 	
-	var Socket = require('core/socket');
-	var Workspace = require('core/workspace');
-	var Notification = require('core/notification');
-	var Fn = require('core/fn');
+	var Utils = require('core/utils');
 	var FileManager = require('core/fileManager');
 	
-	var Coffee = require('./coffee');
-	
 	var EditorSession = require('modules/editor/ext/session');
+	var EditorCompiler = require('modules/editor/ext/compiler');
 	
 	var Extension = ExtensionManager.register({
 		name: 'coffee-compiler',
 		
 	}, {
+		worker: null,
+		watcher: null,
+		compilerName: 'CoffeeScript',
 		init: function() {
 			var self = this;
 			
-			EditorSession.on('save', this.onSave);
+			this.worker = new Worker(this.getBaseUrl() + '/worker.js');
+			
+			this.worker.onmessage = function(e) {
+				self.onWorker(e.data);
+			};
+			
+			this.watcher = EditorCompiler.addWatcher(this.name, {
+				property: 'source',
+				extensions: ['coffee'],
+				outputExtension: 'js',
+				comments: true,
+				commentRegex: /^\s*\#\s*(.+)/,
+				watch: this.onWatch.bind(this),
+			});
 		},
 		destroy: function() {
-			EditorSession.off('save', this.onSave);
+			this.worker.terminate();
+			this.worker = null;
+			
+			this.watcher = null;
+			EditorCompiler.removeWatcher(this.name);
 		},
-		onSave: function(e) {
-			if (Extension._exts.indexOf(e.storage.extension) !== -1) {
-				Extension.compile(e.storage.workspaceId, e.storage.path, e.session.data.getValue());
-			}
-		},
-		_exts: ['coffee'],
-		importWorkspace: null,
-		importPath: '',
-		compile: function(workspaceId, path, doc) {
-			var self = this;
-			var options = FileManager.getFileOptions(doc, /^\s*\#\s*(.+)/);
-			
-			if (!options.out) {
-				return false;
-			}
-			
-			var destination = FileManager.parsePath(path, options.out, [this._exts.join('|'), 'js']);
-			
-			if (!destination) {
-				return false;
-			}
-			
-			this.importWorkspace = workspaceId;
-			this.importPath = path;
-			
-			try {
-				var res = Coffee.compile(doc, {
-					bare: true,
+		onWatch: function(workspaceId, obj, session, value) {
+			EditorCompiler.addCompiler(this.watcher, this.compilerName, workspaceId, obj, function(compiler) {
+				this.worker.postMessage({
+					action: 'compile',
+					id: compiler.id,
+					source: compiler.source
 				});
 				
-				res = res.trim();
+				compiler.file = this.onFile.bind(this);
+			}.bind(this));
+		},
+		onFile: function(compiler, path, file) {
+			if (!this.worker) {
+				return EditorCompiler.removeCompiler(compiler);
+			}
+			
+			this.worker.postMessage({
+				action: 'file',
+				id: compiler.id,
+				path: path,
+				file: file
+			});
+		},
+		onWorker: function(data) {
+			var compiler = EditorCompiler.getCompiler(data.id);
+			
+			if (!compiler) {
+				return;
+			}
+			
+			switch (data.action) {
+				case 'output':
+					EditorCompiler.saveOutput(compiler, data.data);
+				break;
 				
-				FileManager.saveFile(workspaceId, destination, res, null);
-			} catch (e) {
-				Notification.open({
-					type: 'error',
-					title: 'CoffeeScript compilation failed',
-					description: e.message + ' on line ' + e.location.first_line,
-					autoClose: true
-				});
+				case 'error':
+					compiler.destroy(new Error(
+							__('%s on <strong>%s:%s</strong> in file <strong>%s</strong>.', data.error.message, data.error.line+1, data.error.column+1, Utils.path.humanize(data.path))
+					));
+					EditorCompiler.removeCompiler(compiler);
+				break;
 			}
 		}
 	});
