@@ -1,20 +1,30 @@
+/* global define, $ */
+"use strict";
+
 define(function(require, exports, module) {
-	var ExtensionManager = require('core/extensionManager');
+	const ExtensionManager = require('core/extensionManager');
 	
-	var Utils = require('core/utils');
-	var FileManager = require('core/fileManager');
+	const Utils = require('core/utils');
+	const FileManager = require('core/fileManager');
 	
-	var EditorSession = require('modules/editor/ext/session');
-	var EditorCompiler = require('modules/editor/ext/compiler');
+	const EditorSession = require('modules/editor/ext/session');
+	const EditorCompiler = require('modules/editor/ext/compiler');
 	
-	var Extension = ExtensionManager.register({
-		name: 'coffee-compiler',
+	class Extension extends ExtensionManager.Extension {
+		constructor() {
+			super({
+				name: 'coffee-compiler',
+			});
+			
+			this.worker = null;
+			this.watcher = null;
+			
+			this.compilerName = 'CoffeeScript';
+		}
 		
-	}, {
-		worker: null,
-		watcher: null,
-		compilerName: 'CoffeeScript',
-		init: function() {
+		init() {
+			super.init();
+			
 			var self = this;
 			
 			this.worker = new Worker(this.getBaseUrl() + '/worker.js?rev=' + this.version);
@@ -31,15 +41,19 @@ define(function(require, exports, module) {
 				commentRegex: /^\s*\#\s*(.+)/,
 				watch: this.onWatch.bind(this),
 			});
-		},
-		destroy: function() {
+		}
+		
+		destroy() {
+			super.destroy();
+			
 			this.worker.terminate();
 			this.worker = null;
 			
 			this.watcher = null;
 			EditorCompiler.removeWatcher(this.name);
-		},
-		onWatch: function(workspaceId, obj, session, value) {
+		}
+		
+		onWatch(workspaceId, obj, session, value) {
 			EditorCompiler.addCompiler(this.watcher, this.compilerName, workspaceId, obj, function(compiler) {
 				this.worker.postMessage({
 					action: 'compile',
@@ -49,8 +63,9 @@ define(function(require, exports, module) {
 				
 				compiler.file = this.onFile.bind(this);
 			}.bind(this));
-		},
-		onFile: function(compiler, path, file) {
+		}
+		
+		onFile(compiler, path, file) {
 			if (!this.worker) {
 				return EditorCompiler.removeCompiler(compiler);
 			}
@@ -61,8 +76,9 @@ define(function(require, exports, module) {
 				path: path,
 				file: file
 			});
-		},
-		onWorker: function(data) {
+		}
+		
+		onWorker(data) {
 			var compiler = EditorCompiler.getCompiler(data.id);
 			
 			if (!compiler) {
@@ -76,13 +92,13 @@ define(function(require, exports, module) {
 				
 				case 'error':
 					compiler.destroy(new Error(
-							__('%s on <strong>%s:%s</strong> in file <strong>%s</strong>.', data.error.message, data.error.line+1, data.error.column+1, Utils.path.humanize(data.path))
+							'%s on <strong>%s:%s</strong> in file <strong>%s</strong>.'.sprintfEscape(data.error.message, data.error.line+1, data.error.column+1, data.path)
 					));
 					EditorCompiler.removeCompiler(compiler);
 				break;
 			}
 		}
-	});
+	}
 
-	module.exports = Extension.api();
+	module.exports = new Extension();
 });
